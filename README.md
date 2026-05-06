@@ -334,7 +334,7 @@ Here is a TENTATIVE grading rule for your project:
 
 ### Bonus (Up to 20 points)
 
-You may implement some of the following features to get bonus points. We will decide your bonus points based on the completeness, complexity, and difficulty of your implemented functions. No need to implement all the features.
+You may implement some of the following features to get bonus points. We will decide your bonus points based on the completeness, complexity, and difficulty of your implemented functions.
 
 - Implement the function of DHCP lease duration.
 - Design the DHCP function according to the RFC protocol to ensure that DHCP does not duplicate IP allocation.
