@@ -1,20 +1,17 @@
 from os_ken.lib import addrconv
-from os_ken.lib.packet import packet
-from os_ken.lib.packet import ethernet
-from os_ken.lib.packet import ipv4
-from os_ken.lib.packet import udp
-from os_ken.lib.packet import dhcp
+from os_ken.lib.packet import packet, ethernet, ipv4, udp, dhcp
+from os_ken.ofproto import inet
+from os_ken.lib.packet import ether_types
+import ipaddress
 
 
 class Config():
-    controller_macAddr = '7e:49:b3:f0:f9:99' # don't modify, a dummy mac address for fill the mac enrty
-    dns = '8.8.8.8' # don't modify, just for the dns entry
-    start_ip = '192.168.1.2' # can be modified
-    end_ip = '192.168.1.100' # can be modified
-    netmask = '255.255.255.0' # can be modified
-
-    # You may use above attributes to configure your DHCP server.
-    # You can also add more attributes like "lease_time" to support bouns function.
+    controller_macAddr = '7e:49:b3:f0:f9:99'  # don't modify, a dummy mac address for fill the mac enrty
+    dns = '8.8.8.8'  # don't modify, just for the dns entry
+    start_ip = '192.168.1.2'  # can be modified
+    end_ip = '192.168.1.100'  # can be modified
+    netmask = '255.255.255.0'  # can be modified
+    server_ip = '192.168.1.1'  # 设定控制器的网关/DHCP Server IP
 
 
 class DHCPServer():
@@ -23,27 +20,107 @@ class DHCPServer():
     end_ip = Config.end_ip
     netmask = Config.netmask
     dns = Config.dns
+    server_ip = Config.server_ip
+
+    # 简单的 IP 地址池和已分配 IP 记录字典 (MAC -> IP)
+    ip_pool = [str(ip) for ip in ipaddress.IPv4Network('192.168.1.0/24').hosts()
+               if Config.start_ip <= str(ip) <= Config.end_ip]
+    allocated_ips = {}
 
     @classmethod
-    def assemble_ack(cls, pkt, datapath, port):
-        # TODO: Generate DHCP ACK packet here
-        return ack_pkt
+    def assemble_dhcp_reply(cls, pkt, assigned_ip, msg_type):
+        """
+        统一构建 DHCP 回复包 (OFFER 或 ACK)
+        """
+        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
 
-    @classmethod
-    def assemble_offer(cls, pkt, datapath):
-        # TODO: Generate DHCP OFFER packet here
-        pass
+        client_mac = eth_pkt.src
+
+        # 1. 封装 Ethernet 层
+        eth = ethernet.ethernet(dst=client_mac,
+                                src=cls.hardware_addr,
+                                ethertype=ether_types.ETH_TYPE_IP)
+
+        # 2. 封装 IPv4 层 (DHCP 回复通常以广播形式发送给客户端)
+        ip = ipv4.ipv4(src=cls.server_ip,
+                       dst='255.255.255.255',
+                       proto=inet.IPPROTO_UDP)
+
+        # 3. 封装 UDP 层 (Server 端口 67, Client 端口 68)
+        u = udp.udp(src_port=67, dst_port=68)
+
+        # 4. 封装 DHCP 层
+        # 组装 DHCP 选项 (Message Type 必须有，子网掩码、Server ID、DNS 等)
+        options = dhcp.options([
+            dhcp.option(tag=dhcp.DHCP_MESSAGE_TYPE_OPT, value=bytes([msg_type])),
+            dhcp.option(tag=dhcp.DHCP_SUBNET_MASK_OPT, value=addrconv.ipv4.text_to_bin(cls.netmask)),
+            dhcp.option(tag=dhcp.DHCP_SERVER_IDENTIFIER_OPT, value=addrconv.ipv4.text_to_bin(cls.server_ip)),
+            dhcp.option(tag=dhcp.DHCP_DNS_SERVER_OPT, value=addrconv.ipv4.text_to_bin(cls.dns)),
+            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff')  # 无限租期
+        ])
+
+        # 补齐 chaddr (Client Hardware Address) 字段到 16 字节
+        mac_bin = addrconv.mac.text_to_bin(client_mac)
+        chaddr = mac_bin + b'\x00' * 10
+
+        d = dhcp.dhcp(op=dhcp.DHCP_BOOT_REPLY,
+                      htype=1,
+                      hlen=6,
+                      xid=dhcp_pkt.xid,  # 必须和请求的 Transaction ID 保持一致
+                      yiaddr=assigned_ip,  # 给客户端分配的 IP (Your IP)
+                      siaddr=cls.server_ip,  # 下一个 Server 的 IP
+                      chaddr=chaddr,
+                      options=options)
+
+        reply_pkt = packet.Packet()
+        reply_pkt.add_protocol(eth)
+        reply_pkt.add_protocol(ip)
+        reply_pkt.add_protocol(u)
+        reply_pkt.add_protocol(d)
+
+        return reply_pkt
 
     @classmethod
     def handle_dhcp(cls, datapath, port, pkt):
-        # TODO: Specify the type of received DHCP packet
-        # You may choose a valid IP from IP pool and genereate DHCP OFFER packet
-        # Or generate a DHCP ACK packet
-        # Finally send the generated packet to the host by using _send_packet method
-        pass
+        """
+        处理传入的 DHCP 报文并进行响应
+        """
+        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
+        client_mac = eth_pkt.src
+
+        # 解析 DHCP Message Type
+        msg_type = None
+        for opt in dhcp_pkt.options.option_list:
+            if opt.tag == dhcp.DHCP_MESSAGE_TYPE_OPT:
+                msg_type = ord(opt.value)
+                break
+
+        # 1. 如果是 DHCP DISCOVER，分配 IP 并回复 DHCP OFFER
+        if msg_type == dhcp.DHCP_DISCOVER:
+            if client_mac not in cls.allocated_ips:
+                if cls.ip_pool:
+                    cls.allocated_ips[client_mac] = cls.ip_pool.pop(0)
+                else:
+                    return  # 地址池空了，直接忽略
+            assigned_ip = cls.allocated_ips[client_mac]
+            print(f"[DHCP] Receive DISCOVER from {client_mac}, Sending OFFER {assigned_ip}")
+
+            offer_pkt = cls.assemble_dhcp_reply(pkt, assigned_ip, dhcp.DHCP_OFFER)
+            cls._send_packet(datapath, port, offer_pkt)
+
+        # 2. 如果是 DHCP REQUEST，确认分配并回复 DHCP ACK
+        elif msg_type == dhcp.DHCP_REQUEST:
+            assigned_ip = cls.allocated_ips.get(client_mac)
+            if assigned_ip:
+                print(f"[DHCP] Receive REQUEST from {client_mac}, Sending ACK {assigned_ip}")
+                ack_pkt = cls.assemble_dhcp_reply(pkt, assigned_ip, dhcp.DHCP_ACK)
+                cls._send_packet(datapath, port, ack_pkt)
 
     @classmethod
     def _send_packet(cls, datapath, port, pkt):
+        # 原始发包逻辑，无需改动
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         if isinstance(pkt, str):
@@ -57,4 +134,3 @@ class DHCPServer():
                                   actions=actions,
                                   data=data)
         datapath.send_msg(out)
-
