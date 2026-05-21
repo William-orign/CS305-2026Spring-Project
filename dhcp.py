@@ -68,10 +68,10 @@ class DHCPServer():
             dhcp.option(tag=dhcp.DHCP_MESSAGE_TYPE_OPT, value=bytes([msg_type])),
             dhcp.option(tag=dhcp.DHCP_SUBNET_MASK_OPT, value=addrconv.ipv4.text_to_bin(cls.netmask)),
             dhcp.option(tag=dhcp.DHCP_SERVER_IDENTIFIER_OPT, value=addrconv.ipv4.text_to_bin(cls.server_ip)),
-            dhcp.option(tag=dhcp.DHCP_DNS_SERVER_OPT, value=addrconv.ipv4.text_to_bin(cls.dns)),
-            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff')  # 无限租期
+            # 替换为正确的常量名，或者直接用数字 6 也可以：dhcp.option(tag=6, ...)
+            dhcp.option(tag=dhcp.DHCP_DOMAIN_NAME_SERVER_OPT, value=addrconv.ipv4.text_to_bin(cls.dns)),
+            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff')  
         ])
-
         # 补齐 chaddr (Client Hardware Address) 字段到 16 字节
         mac_bin = addrconv.mac.text_to_bin(client_mac)
         chaddr = mac_bin + b'\x00' * 10
