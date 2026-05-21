@@ -94,7 +94,8 @@ class DHCPServer():
         msg_type = None
         for opt in dhcp_pkt.options.option_list:
             if opt.tag == dhcp.DHCP_MESSAGE_TYPE_OPT:
-                msg_type = ord(opt.value)
+                # 兼容 Python 3 的 bytes 处理
+                msg_type = opt.value[0] if isinstance(opt.value, bytes) else ord(opt.value)
                 break
 
         # 1. 如果是 DHCP DISCOVER，分配 IP 并回复 DHCP OFFER
