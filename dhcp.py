@@ -41,40 +41,47 @@ class DHCPServer():
 
     @classmethod
     def assemble_dhcp_reply(cls, pkt, assigned_ip, msg_type):
-        """
-        统一构建 DHCP 回复包 (OFFER 或 ACK)
-        """
+        import struct  # 新增：用于标准转化租约时间
         eth_pkt = pkt.get_protocol(ethernet.ethernet)
         dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
 
         client_mac = eth_pkt.src
 
-        # 1. 封装 Ethernet 层
-        # 【关键修复】：将目标 MAC 改为全网广播，匹配三层的广播 IP
-        eth = ethernet.ethernet(dst='ff:ff:ff:ff:ff:ff',
+        # 【核心修复 1】：尊重客户端的 Flags，动态决定单播还是广播
+        is_broadcast = False
+        try:
+            is_broadcast = (dhcp_pkt.flags & 0x8000) != 0
+        except Exception:
+            is_broadcast = False
+
+        target_mac = 'ff:ff:ff:ff:ff:ff' if is_broadcast else client_mac
+        target_ip = '255.255.255.255' if is_broadcast else str(assigned_ip)
+
+        eth = ethernet.ethernet(dst=target_mac,
                                 src=cls.hardware_addr,
                                 ethertype=ether_types.ETH_TYPE_IP)
 
-        # 2. 封装 IPv4 层
         ip = ipv4.ipv4(src=cls.server_ip,
-                       dst='255.255.255.255',
+                       dst=target_ip,
                        proto=inet.IPPROTO_UDP)
 
-        # 3. 封装 UDP 层
         u = udp.udp(src_port=67, dst_port=68)
 
-        # 4. 封装 DHCP 层
-        # 【之前修复】：使用 tag=6 解决 DNS 宏变量缺失问题
+        # 【核心修复 2】：改用标准的一天 (86400秒) 租期，避免 \xff 触发 dhclient 的 bug
+        lease_time_bin = struct.pack('!I', 86400)
+
         options = dhcp.options([
             dhcp.option(tag=dhcp.DHCP_MESSAGE_TYPE_OPT, value=bytes([msg_type])),
             dhcp.option(tag=dhcp.DHCP_SUBNET_MASK_OPT, value=addrconv.ipv4.text_to_bin(cls.netmask)),
             dhcp.option(tag=dhcp.DHCP_SERVER_IDENTIFIER_OPT, value=addrconv.ipv4.text_to_bin(cls.server_ip)),
             dhcp.option(tag=6, value=addrconv.ipv4.text_to_bin(cls.dns)),
-            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff') 
+            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=lease_time_bin)
         ])
 
-        mac_bin = addrconv.mac.text_to_bin(client_mac)
-        chaddr = mac_bin + b'\x00' * 10
+        # 【核心修复 3】：原封不动地返回客户端请求中的 chaddr、giaddr 和 flags，保证 100% 匹配验证
+        giaddr = getattr(dhcp_pkt, 'giaddr', 0)
+        chaddr = getattr(dhcp_pkt, 'chaddr', None)
+        flags = getattr(dhcp_pkt, 'flags', 0)
 
         d = dhcp.dhcp(op=dhcp.DHCP_BOOT_REPLY,
                       htype=1,
@@ -82,7 +89,9 @@ class DHCPServer():
                       xid=dhcp_pkt.xid,
                       yiaddr=str(assigned_ip),
                       siaddr=cls.server_ip,
+                      giaddr=giaddr,
                       chaddr=chaddr,
+                      flags=flags,
                       options=options)
 
         reply_pkt = packet.Packet()
