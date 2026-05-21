@@ -50,40 +50,40 @@ class DHCPServer():
         client_mac = eth_pkt.src
 
         # 1. 封装 Ethernet 层
-        eth = ethernet.ethernet(dst=client_mac,
-                    src=cls.hardware_addr,
-                    ethertype=ether_types.ETH_TYPE_IP)
+        # 【关键修复】：将目标 MAC 改为全网广播，匹配三层的广播 IP
+        eth = ethernet.ethernet(dst='ff:ff:ff:ff:ff:ff',
+                                src=cls.hardware_addr,
+                                ethertype=ether_types.ETH_TYPE_IP)
 
-        # 2. 封装 IPv4 层 (DHCP 回复通常以广播形式发送给客户端)
+        # 2. 封装 IPv4 层
         ip = ipv4.ipv4(src=cls.server_ip,
                        dst='255.255.255.255',
                        proto=inet.IPPROTO_UDP)
 
-        # 3. 封装 UDP 层 (Server 端口 67, Client 端口 68)
+        # 3. 封装 UDP 层
         u = udp.udp(src_port=67, dst_port=68)
 
         # 4. 封装 DHCP 层
-        # 组装 DHCP 选项 (Message Type 必须有，子网掩码、Server ID、DNS 等)
+        # 【之前修复】：使用 tag=6 解决 DNS 宏变量缺失问题
         options = dhcp.options([
             dhcp.option(tag=dhcp.DHCP_MESSAGE_TYPE_OPT, value=bytes([msg_type])),
             dhcp.option(tag=dhcp.DHCP_SUBNET_MASK_OPT, value=addrconv.ipv4.text_to_bin(cls.netmask)),
             dhcp.option(tag=dhcp.DHCP_SERVER_IDENTIFIER_OPT, value=addrconv.ipv4.text_to_bin(cls.server_ip)),
-            # DNS option: use numeric tag 6 to be compatible across implementations
             dhcp.option(tag=6, value=addrconv.ipv4.text_to_bin(cls.dns)),
-            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff')  
+            dhcp.option(tag=dhcp.DHCP_IP_ADDR_LEASE_TIME_OPT, value=b'\xff\xff\xff\xff') 
         ])
-        # 补齐 chaddr (Client Hardware Address) 字段到 16 字节
+
         mac_bin = addrconv.mac.text_to_bin(client_mac)
         chaddr = mac_bin + b'\x00' * 10
 
         d = dhcp.dhcp(op=dhcp.DHCP_BOOT_REPLY,
-                  htype=1,
-                  hlen=6,
-                  xid=dhcp_pkt.xid,  # 必须和请求的 Transaction ID 保持一致
-                  yiaddr=str(assigned_ip),  # 给客户端分配的 IP (Your IP)
-                  siaddr=cls.server_ip,  # 下一个 Server 的 IP
-                  chaddr=chaddr,
-                  options=options)
+                      htype=1,
+                      hlen=6,
+                      xid=dhcp_pkt.xid,
+                      yiaddr=str(assigned_ip),
+                      siaddr=cls.server_ip,
+                      chaddr=chaddr,
+                      options=options)
 
         reply_pkt = packet.Packet()
         reply_pkt.add_protocol(eth)
