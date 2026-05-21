@@ -117,6 +117,28 @@ class ControllerApp(app_manager.OSKenApp):
 
             actions = [parser.OFPActionOutput(out_port, 0)]
 
+            # 如果知道目标端口，为该流下发一条临时流表，避免后续触发 PacketIn
+            if out_port != ofproto.OFPP_FLOOD:
+                # 仅针对单播流下发流表，广播/泛洪包不应安装流表
+                try:
+                    match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+                except Exception:
+                    # 兼容不同版本的 match 字段名称
+                    match = parser.OFPMatch(in_port=in_port, dl_dst=dst, dl_src=src)
+
+                # 构造 FlowMod，安装并让交换机后续自行转发
+                try:
+                    mod = parser.OFPFlowMod(datapath=datapath, match=match, cookie=0,
+                                            command=ofproto.OFPFC_ADD, idle_timeout=10, hard_timeout=30,
+                                            priority=1, buffer_id=msg.buffer_id,
+                                            out_port=ofproto.OFPP_NONE, actions=actions)
+                    datapath.send_msg(mod)
+                    return
+                except Exception:
+                    # 若 FlowMod 构造不兼容，回退到发送 PacketOut（确保功能）
+                    pass
+
+            # 对于需要泛洪或 FlowMod 构造失败的情况，发送 PacketOut
             data = None
             if msg.buffer_id == ofproto.OFP_NO_BUFFER:
                 data = msg.data
