@@ -23,8 +23,12 @@ class DHCPServer():
     server_ip = Config.server_ip
 
     # 简单的 IP 地址池和已分配 IP 记录字典 (MAC -> IP)
+    # 【修复点 1】：将字符串转换为 IPv4Address 对象进行正确的大小比较
+    start_addr = ipaddress.IPv4Address(Config.start_ip)
+    end_addr = ipaddress.IPv4Address(Config.end_ip)
+    
     ip_pool = [str(ip) for ip in ipaddress.IPv4Network('192.168.1.0/24').hosts()
-               if Config.start_ip <= str(ip) <= Config.end_ip]
+               if start_addr <= ip <= end_addr]
     allocated_ips = {}
 
     @classmethod
@@ -86,15 +90,20 @@ class DHCPServer():
         """
         处理传入的 DHCP 报文并进行响应
         """
-        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        # 终极安全检查：确保这确实是一个 DHCP 报文
         dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
-        client_mac = eth_pkt.src
+        if not dhcp_pkt:
+            return
 
-        # 解析 DHCP Message Type
+        eth_pkt = pkt.get_protocol(ethernet.ethernet)
+        client_mac = eth_pkt.src
+        
+        print(f"\n[DHCP DEBUG] 捕捉到来自 {client_mac} 的 DHCP 报文！正在解析...")
+
+        # 【修复点 2】：解析 DHCP Message Type，兼容 Python 3 的 bytes 处理
         msg_type = None
         for opt in dhcp_pkt.options.option_list:
             if opt.tag == dhcp.DHCP_MESSAGE_TYPE_OPT:
-                # 兼容 Python 3 的 bytes 处理
                 msg_type = opt.value[0] if isinstance(opt.value, bytes) else ord(opt.value)
                 break
 
@@ -104,9 +113,10 @@ class DHCPServer():
                 if cls.ip_pool:
                     cls.allocated_ips[client_mac] = cls.ip_pool.pop(0)
                 else:
+                    print(f"[DHCP ERROR] 地址池空了！无法为 {client_mac} 分配！")
                     return  # 地址池空了，直接忽略
             assigned_ip = cls.allocated_ips[client_mac]
-            print(f"[DHCP] Receive DISCOVER from {client_mac}, Sending OFFER {assigned_ip}")
+            print(f"[DHCP SUCCESS] 收到 DISCOVER！正在给 {client_mac} 发送 OFFER: {assigned_ip}")
 
             offer_pkt = cls.assemble_dhcp_reply(pkt, assigned_ip, dhcp.DHCP_OFFER)
             cls._send_packet(datapath, port, offer_pkt)
@@ -115,7 +125,7 @@ class DHCPServer():
         elif msg_type == dhcp.DHCP_REQUEST:
             assigned_ip = cls.allocated_ips.get(client_mac)
             if assigned_ip:
-                print(f"[DHCP] Receive REQUEST from {client_mac}, Sending ACK {assigned_ip}")
+                print(f"[DHCP SUCCESS] 收到 REQUEST！确认分配 ACK: {assigned_ip}")
                 ack_pkt = cls.assemble_dhcp_reply(pkt, assigned_ip, dhcp.DHCP_ACK)
                 cls._send_packet(datapath, port, ack_pkt)
 
