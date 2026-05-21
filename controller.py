@@ -27,6 +27,8 @@ class ControllerApp(app_manager.OSKenApp):
 
     def __init__(self, *args, **kwargs):
         super(ControllerApp, self).__init__(*args, **kwargs)
+        # 记录 dpid -> (mac -> port) 的映射，用于学习交换功能
+        self.mac_to_port = {}
 
     @set_ev_cls(event.EventSwitchEnter)
     def handle_switch_add(self, ev):
@@ -80,15 +82,52 @@ class ControllerApp(app_manager.OSKenApp):
         try:
             msg = ev.msg
             datapath = msg.datapath
+            ofproto = datapath.ofproto
+            parser = datapath.ofproto_parser
+            in_port = msg.in_port
+
             pkt = packet.Packet(data=msg.data)
-            pkt_dhcp = pkt.get_protocols(dhcp.dhcp)
-            inPort = msg.in_port
-            if not pkt_dhcp:
-                # TODO: handle other protocols like ARP 
-                pass
+            eth = pkt.get_protocol(ethernet.ethernet)
+
+            # ignore lldp to avoid topology discovery noise
+            if eth and eth.ethertype == ether_types.ETH_TYPE_LLDP:
+                return
+
+            # DHCP handling (preserve existing behavior)
+            dhcp_pkt = pkt.get_protocol(dhcp.dhcp)
+            if dhcp_pkt:
+                DHCPServer.handle_dhcp(datapath, in_port, pkt)
+                return
+
+            # ===== Learning switch behavior =====
+            dpid = datapath.id
+            self.mac_to_port.setdefault(dpid, {})
+
+            src = eth.src
+            dst = eth.dst
+
+            # learn source MAC -> port
+            self.mac_to_port[dpid][src] = in_port
+
+            # decide out port
+            if dst in self.mac_to_port[dpid]:
+                out_port = self.mac_to_port[dpid][dst]
             else:
-                DHCPServer.handle_dhcp(datapath, inPort, pkt)      
-            return 
+                out_port = ofproto.OFPP_FLOOD
+
+            actions = [parser.OFPActionOutput(out_port, 0)]
+
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+
+            out = parser.OFPPacketOut(datapath=datapath,
+                                      buffer_id=msg.buffer_id,
+                                      in_port=in_port,
+                                      actions=actions,
+                                      data=data)
+            datapath.send_msg(out)
+            return
         except Exception as e:
             self.logger.error(e)
     
