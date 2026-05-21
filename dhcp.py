@@ -23,12 +23,9 @@ class DHCPServer():
     server_ip = Config.server_ip
 
     # 简单的 IP 地址池和已分配 IP 记录字典 (MAC -> IP)
-    # 【修复点 1】：将字符串转换为 IPv4Address 对象进行正确的大小比较
-    start_addr = ipaddress.IPv4Address(Config.start_ip)
-    end_addr = ipaddress.IPv4Address(Config.end_ip)
-    
+    # 简单的 IP 地址池和已分配 IP 记录字典 (MAC -> IP)
     ip_pool = [str(ip) for ip in ipaddress.IPv4Network('192.168.1.0/24').hosts()
-               if start_addr <= ip <= end_addr]
+               if ipaddress.IPv4Address(Config.start_ip) <= ip <= ipaddress.IPv4Address(Config.end_ip)]
     allocated_ips = {}
 
     @classmethod
