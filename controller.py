@@ -150,6 +150,7 @@ class ControllerApp(app_manager.OSKenApp):
             return
 
         try:
+            self.firewall.clear_installed_for_switch(dpid)#在安装前先清除之前安装的规则的记录，避免再加入时不装
             ofctl = OfCtl.factory(datapath, self.logger)
             self.firewall.install_rules({dpid: ofctl})
         except Exception as e:
