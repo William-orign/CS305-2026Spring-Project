@@ -6,6 +6,7 @@ from os_ken.topology import event
 from os_ken.ofproto import ofproto_v1_0, ether
 from os_ken.lib.packet import packet, ethernet, ether_types, arp
 from os_ken.lib.packet import dhcp
+from os_ken.lib import hub
 
 from dhcp import DHCPServer
 from ofctl_utilis import OfCtl, VLANID_NONE
@@ -78,6 +79,11 @@ class ControllerApp(app_manager.OSKenApp):
         except Exception as e:
             self.firewall = None
             self.logger.warning("Firewall init failed: %s", e)
+
+        self.firewall_reload_thread = None
+
+        if self.firewall is not None:
+            self.firewall_reload_thread = hub.spawn(self._firewall_reload_loop)
 
         self.logger.info(
             "Controller started. Routing algorithm = %s",
@@ -158,6 +164,61 @@ class ControllerApp(app_manager.OSKenApp):
                 "[FIREWALL] install rules failed on s%s: %s",
                 dpid, e
             )
+    
+    def _build_firewall_ofctls(self):
+        """
+        Build OfCtl objects for all currently connected switches.
+        """
+        ofctls = {}
+
+        for dpid, datapath in list(self.switches.items()):
+            try:
+                ofctls[dpid] = OfCtl.factory(datapath, self.logger)
+            except Exception as e:
+                self.logger.warning(
+                    "[FIREWALL] cannot create OfCtl for s%s: %s",
+                    dpid,
+                    e
+                )
+
+        return ofctls
+
+    def _firewall_reload_loop(self):
+        """
+        Periodically check whether firewall_rule.json has changed.
+        If changed, reload firewall rules without restarting controller or Mininet.
+        """
+        self.logger.info(
+            "[FIREWALL] reload watcher started, rule_file=%s",
+            self.firewall.rule_file
+        )
+        
+        while True:
+            hub.sleep(1)
+
+            if self.firewall is None:
+                continue
+
+            try:
+                if not self.firewall.rule_file_changed():
+                    continue
+
+                ofctls = self._build_firewall_ofctls()
+
+                if not ofctls:
+                    self.firewall.mark_rule_file_seen()
+                    continue
+
+                self.logger.info("[FIREWALL] rule file changed, reloading...")
+
+                self.firewall.reload_rules(ofctls)
+
+                self.logger.info("[FIREWALL] dynamic reload completed")
+
+            except Exception as e:
+                self.logger.warning("[FIREWALL] dynamic reload failed: %s", e)
+                if self.firewall is not None:
+                    self.firewall.mark_rule_file_seen()
 
     # ============================================================
     # Topology Event Handlers
