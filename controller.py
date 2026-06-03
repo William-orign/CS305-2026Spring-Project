@@ -220,6 +220,113 @@ class ControllerApp(app_manager.OSKenApp):
                 if self.firewall is not None:
                     self.firewall.mark_rule_file_seen()
 
+    
+    def _print_topology_and_all_paths(self, reason=""):
+        """
+        Print the current topology and the shortest paths between every pair
+        of switches.
+
+        This is mainly for the project demo requirement:
+        after each topology change, the controller should show the current
+        topology structure and the shortest path between any two switches.
+        """
+        switches = sorted(set(self.switches.keys()) | set(self.graph.keys()))
+
+        self.logger.info(
+            "========== TOPOLOGY UPDATE: %s ==========",
+            reason
+        )
+
+        if not switches:
+            self.logger.info("[TOPOLOGY] no switch in current topology")
+            self.logger.info("================================================")
+            return
+
+        # 1. Print all switches.
+        self.logger.info(
+            "[TOPOLOGY] switches: %s",
+            ", ".join(["s%s" % dpid for dpid in switches])
+        )
+
+        # 2. Print all switch-switch links.
+        self.logger.info("[TOPOLOGY] links:")
+
+        has_link = False
+
+        for src in switches:
+            for dst, src_port in sorted(self.graph.get(src, {}).items()):
+                # Avoid duplicate printing for undirected links.
+                # For example, print s1-s2 only once instead of printing
+                # both s1-s2 and s2-s1.
+                if src < dst:
+                    dst_port = self.graph.get(dst, {}).get(src)
+                    self.logger.info(
+                        "    s%s:%s <--> s%s:%s",
+                        src, src_port, dst, dst_port
+                    )
+                    has_link = True
+
+        if not has_link:
+            self.logger.info("    none")
+
+        # 3. Print shortest paths between every pair of switches.
+        self.logger.info(
+            "[ALL-PAIRS SHORTEST PATHS] algorithm=%s",
+            self.ROUTING_ALGO
+        )
+
+        if len(switches) < 2:
+            self.logger.info("    only one switch, no switch-pair path")
+            self.logger.info("================================================")
+            return
+
+        for i in range(len(switches)):
+            for j in range(i + 1, len(switches)):
+                src = switches[i]
+                dst = switches[j]
+
+                path = self._shortest_path(src, dst)
+
+                if path is None:
+                    self.logger.info(
+                        "    s%s -> s%s: no path",
+                        src, dst
+                    )
+                else:
+                    path_str = " -> ".join(["s%s" % dpid for dpid in path])
+                    self.logger.info(
+                        "    s%s -> s%s: %s, length=%d",
+                        src, dst, path_str, len(path) - 1
+                    )
+
+        self.logger.info("================================================")
+
+    def _remove_links_by_port(self, dpid, port_no):
+        """
+        Remove switch-switch links that use the specified switch port.
+        This is used when a port becomes down.
+        """
+        removed_neighbors = []
+
+        for (src, dst), out_port in list(self.links.items()):
+            if src == dpid and out_port == port_no:
+                removed_neighbors.append(dst)
+
+        for dst in removed_neighbors:
+            self.links.pop((dpid, dst), None)
+            self.links.pop((dst, dpid), None)
+
+            if dpid in self.graph:
+                self.graph[dpid].pop(dst, None)
+
+            if dst in self.graph:
+                self.graph[dst].pop(dpid, None)
+
+            self.logger.info(
+                "[PORT] related link removed from graph: s%s <--> s%s",
+                dpid, dst
+            )
+
     # ============================================================
     # Topology Event Handlers
     # ============================================================
@@ -248,6 +355,8 @@ class ControllerApp(app_manager.OSKenApp):
         # 如果 firewall 已经实现，可以顺手给新 switch 安装 firewall rules
         self._install_firewall_on_switch(dpid, datapath)
 
+        self._print_topology_and_all_paths("switch s%s joined" % dpid)
+
     @set_ev_cls(event.EventSwitchLeave)
     def handle_switch_delete(self, ev):
         """
@@ -270,6 +379,8 @@ class ControllerApp(app_manager.OSKenApp):
                 self.links.pop(key, None)
 
         self.logger.info("[SWITCH] s%s left", dpid)
+
+        self._print_topology_and_all_paths("switch s%s left" % dpid)
 
     @set_ev_cls(event.EventHostAdd)
     def handle_host_add(self, ev):
@@ -326,6 +437,10 @@ class ControllerApp(app_manager.OSKenApp):
             src_dpid, src_port, dst_dpid, dst_port
         )
 
+        self._print_topology_and_all_paths(
+            "link s%s-s%s added" % (src_dpid, dst_dpid)
+        )
+
     @set_ev_cls(event.EventLinkDelete)
     def handle_link_delete(self, ev):
         """
@@ -359,18 +474,41 @@ class ControllerApp(app_manager.OSKenApp):
             src_dpid, dst_dpid
         )
 
+        self._print_topology_and_all_paths(
+            "link s%s-s%s removed" % (src_dpid, dst_dpid)
+        )
+
     @set_ev_cls(event.EventPortModify)
     def handle_port_modify(self, ev):
         """
         当 switch port 状态变化时触发。
-        基础测试里通常不会依赖这个函数。
-        这里先打印信息，方便 debug。
+
+        如果 port down，并且该 port 是 switch-switch link 的端口，
+        就从 self.graph 和 self.links 中删除对应边。
+        最后打印当前拓扑和所有 switch-pair shortest paths。
         """
         port = ev.port
+        dpid = port.dpid
+        port_no = port.port_no
 
         self.logger.info(
             "[PORT] modified: switch=s%s port=%s",
-            port.dpid, port.port_no
+            dpid, port_no
+        )
+
+        is_down = False
+
+        try:
+            if hasattr(port, "state"):
+                is_down = bool(port.state & ofproto_v1_0.OFPPS_LINK_DOWN)
+        except Exception:
+            is_down = False
+
+        if is_down:
+            self._remove_links_by_port(dpid, port_no)
+
+        self._print_topology_and_all_paths(
+            "port modified on s%s:%s" % (dpid, port_no)
         )
 
     # ============================================================
