@@ -343,6 +343,25 @@ You may implement some of the following features to get bonus points. We will de
 - Use Mininet to study more network features you have learned in the computer network course, such as TCP behaviors, TCP Reno versus TCP Tahoe, and [Bufferbloat](https://en.wikipedia.org/wiki/Bufferbloat) problem.
 - More that you can think of. Please discuss with the instructors first.
 
+#### DHCP Lease Duration Bonus
+
+This project also supports a lease-time based DHCP bonus in `dhcp.py`:
+
+- Each lease is tracked with an expiration timestamp.
+- Expired leases are reclaimed lazily when the controller receives the next DHCP packet.
+- A MAC that renews before expiration keeps its IP address.
+- A MAC that disappears and later returns after lease expiration can be reassigned the recycled IP.
+
+Suggested demo flow in Mininet:
+
+1. Start the controller and the DHCP test network.
+2. Confirm that `h1` receives an address such as `192.168.1.2`.
+3. Bring `h1` down with `h1 ifconfig h1-eth0 down`.
+4. Wait longer than the configured lease duration in `dhcp.py`.
+5. Trigger DHCP on another host, then confirm that the released IP can be reused.
+
+The current implementation uses a 60 second lease duration for easier live demonstration.
+
 Note that you need to provide a detailed explanation of what you do, how to test the extra functions, and what you discover in the report for the bonus points. You also need to think of a way to demonstrate your bonus functions during your Demo on Week 16.
 
 ## Hints
