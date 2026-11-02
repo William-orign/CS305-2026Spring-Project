@@ -1,3 +1,19 @@
+## 项目简介
+
+本项目是南方科技大学 CS305 课程的 SDN 网络编程实践项目，
+基于 Python、os-ken 和 Mininet，包含 DHCP 地址分配、
+最短路径交换与防火墙等功能。
+
+## 个人贡献
+
+主要参与以下模块的开发：
+
+- 控制器模块（controller.py）：负责网络事件处理与控制逻辑。
+- DHCP 模块（dhcp.py）：负责 DHCP 报文处理与 IP 地址分配。
+
+## 技术栈
+
+Python · Linux · Mininet · os-ken · OpenFlow
 # CS305-2026Spring-Project
 
 **IMPORTANT NOTE**: We try our best to make this specification as clear as possible and cover all the problems we met during our testing. However, it is not uncommon that we could still miss important details in this specification. If there is anything unclear, you should contact the instructors and SA Yuhang Wang in QQ group immediately, rather than guessing what you are required to do.
