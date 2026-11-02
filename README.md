@@ -1,19 +1,38 @@
 ## 项目简介
 
-本项目是南方科技大学 CS305 课程的 SDN 网络编程实践项目，
-基于 Python、os-ken 和 Mininet，包含 DHCP 地址分配、
-最短路径交换与防火墙等功能。
+南方科技大学 CS305 课程项目，基于 Python、os-ken 和 Mininet
+构建 SDN 网络实验系统，实现 DHCP 地址分配、最短路径交换与防火墙功能。
+
+项目已完成课程全部要求，并在课程验收时通过全部测试。
 
 ## 个人贡献
 
-主要参与以下模块的开发：
+主要负责控制器（controller.py）和 DHCP（dhcp.py）模块开发。
 
-- 控制器模块（controller.py）：负责网络事件处理与控制逻辑。
-- DHCP 模块（dhcp.py）：负责 DHCP 报文处理与 IP 地址分配。
+### SDN 控制器
+
+- 监听交换机、链路和主机事件，维护网络拓扑与主机信息。
+- 处理 ARP 报文，学习 IP/MAC 映射并响应 ARP 请求。
+- 实现 Dijkstra 和 Bellman–Ford 两种最短路径算法。
+- 向路径上的交换机下发双向转发规则。
+- 输出网络拓扑和最短路径日志，辅助调试与演示。
+
+### DHCP 服务
+
+- 处理 DHCP DISCOVER 和 REQUEST，生成 OFFER 和 ACK 响应。
+- 管理 IP 地址池与客户端地址分配记录。
+- 实现租约管理、过期地址回收与租约刷新逻辑。
+- 根据客户端广播标志构造单播或广播响应。
+
+## 验证结果
+
+- 在课程验收时通过 DHCP、最短路径交换和防火墙全部测试。
+- 完成课程要求的功能实现与演示。
 
 ## 技术栈
 
-Python · Linux · Mininet · os-ken · OpenFlow
+Python · Linux · Mininet · os-ken · OpenFlow 1.0
+
 # CS305-2026Spring-Project
 
 **IMPORTANT NOTE**: We try our best to make this specification as clear as possible and cover all the problems we met during our testing. However, it is not uncommon that we could still miss important details in this specification. If there is anything unclear, you should contact the instructors and SA Yuhang Wang in QQ group immediately, rather than guessing what you are required to do.
